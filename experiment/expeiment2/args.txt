@@ -1,0 +1,4 @@
+content_dir: D:/NST_mine/content_data
+style_dir: D:/NST_mine/style_data
+vgg: D:/NST_mine/vgg_normalised.pth
+experiment: expeiment2
