@@ -1,18 +1,20 @@
 import os
 import torch
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory
+import gc
+torch.set_grad_enabled(False)
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+from flask import Flask, render_template, send_from_directory
 from flask_wtf import FlaskForm
 from flask_bootstrap import Bootstrap
 from werkzeug.utils import secure_filename
 from wtforms import FileField, SubmitField, FloatField, HiddenField
-from wtforms.validators import InputRequired
 from PIL import Image
 from torchvision import transforms
-import io
 
 # Import your existing AdaIN code
 from utils.models import VGGEncoder, Decoder
-from utils.utils import adaptive_instance_normalization, calc_mean_std
+from utils.utils import adaptive_instance_normalization
 
 
 app = Flask(__name__)
@@ -32,8 +34,7 @@ class UploadForm(FlaskForm):
     submit = SubmitField('Transfer Style')
 
 # Device configuration
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+device = torch.device("cpu")
 # Base directory of the project
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -47,58 +48,75 @@ DECODER_PATH = os.path.join(
 )
 
 # Load models
-encoder = VGGEncoder(VGG_PATH).to(device)
+encoder = VGGEncoder(VGG_PATH)
 
-decoder = Decoder().to(device)
+decoder = Decoder()
 
 decoder.load_state_dict(
     torch.load(
         DECODER_PATH,
-        map_location=device
+        map_location="cpu"
     )
 )
 
+encoder.to(device)
+decoder.to(device)
+
 encoder.eval()
 decoder.eval()
+for p in encoder.parameters():
+    p.requires_grad = False
 
+for p in decoder.parameters():
+    p.requires_grad = False
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def style_transfer(content_image, style_image, encoder, decoder, alpha, device):
-    content_transform = transforms.Compose([
-        transforms.Resize(512),
-        transforms.ToTensor()
-    ])
 
-    style_transform = transforms.Compose([
-        transforms.Resize(512),
-        transforms.ToTensor()
-    ])
-    content_image = content_transform(content_image).unsqueeze(0).to(device)
-    style_image = style_transform(style_image).unsqueeze(0).to(device)
+    transform = transforms.Compose([
+    transforms.Resize(192),
+    transforms.ToTensor()
+])
 
-    with torch.no_grad():
+    content_image = transform(content_image).unsqueeze(0).to(device)
+    style_image = transform(style_image).unsqueeze(0).to(device)
+
+    with torch.inference_mode():
+
         content_feats = encoder(content_image, is_test=True)
         style_feats = encoder(style_image, is_test=True)
 
-        stylized_feats = adaptive_instance_normalization(content_feats, style_feats)
+        stylized_feats = adaptive_instance_normalization(
+            content_feats,
+            style_feats
+        )
 
         stylized_feats = alpha * stylized_feats + (1 - alpha) * content_feats
 
-        stylized_image = decoder(stylized_feats)
+        output = decoder(stylized_feats)
 
-    return stylized_image
+        del content_feats
+        del style_feats
+        del stylized_feats
 
+    del content_image
+    del style_image
+    gc.collect()
+
+    return output
 
 def save_image(image, path):
-    image = image.cpu().clone()
+    image = image.cpu().detach()
     image = image.squeeze(0)
     image = image.clamp(0, 1)
     image = transforms.ToPILImage()(image)
     image.save(path)
 
+    del image
+    gc.collect()
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -140,8 +158,14 @@ def index():
                 result_filename = 'stylized_' + content_filename
                 result_path = os.path.join(app.config['UPLOAD_FOLDER'], result_filename)
                 save_image(stylized_image, result_path)
-                
+
                 result_image = result_filename
+
+                del content_image
+                del style_image
+                del stylized_image
+
+                gc.collect()
             except Exception as e:
                 error = str(e)
     else:
@@ -165,7 +189,7 @@ def send_example(filename):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
 
 
 
