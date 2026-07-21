@@ -31,22 +31,36 @@ class UploadForm(FlaskForm):
     alpha = FloatField('Alpha', default=1.0)
     submit = SubmitField('Transfer Style')
 
-
+# Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-encoder = VGGEncoder("D:/NST_mine/vgg_normalised.pth").to(device)
+# Base directory of the project
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Model paths
+VGG_PATH = os.path.join(BASE_DIR, "vgg_normalised.pth")
+DECODER_PATH = os.path.join(
+    BASE_DIR,
+    "experiment",
+    "final_exp",
+    "decoder_final.pth"
+)
+
+# Load models
+encoder = VGGEncoder(VGG_PATH).to(device)
 
 decoder = Decoder().to(device)
 
 decoder.load_state_dict(
     torch.load(
-        "D:/NST_mine/experiment/final_exp/decoder_final.pth",
+        DECODER_PATH,
         map_location=device
     )
 )
 
 encoder.eval()
 decoder.eval()
+
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -150,12 +164,8 @@ def send_example(filename):
     return send_from_directory('examples', filename)
 
 
-if __name__ == '__main__':
-    from werkzeug.serving import run_simple
-    run_simple('localhost', 5000, app, use_reloader=True, use_debugger=True)
-
-
-
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
 
 
 
